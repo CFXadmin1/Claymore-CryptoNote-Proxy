@@ -16,6 +16,9 @@ is_windows = 0 if os.name=='nt' else 1
 if is_windows == 0:
     from ctypes import windll, Structure, c_short, c_ushort, byref
 
+# A list with the DevFee ports used to identify the shares
+global devfee_ports
+devfee_ports = []
 
 # winbase.h
 STD_INPUT_HANDLE = -10
@@ -99,9 +102,13 @@ def get_now():
 
 def print_dev(args, is_dev):
     if is_dev:
-        print_yellow(get_now() + ' - ' + args)
+        print_yellow('{} - {}'.format(get_now(),args))
     else:
-        print_green(get_now() + ' - ' + args)
+        print_green('{} - {}'.format(get_now(),args))
+
+def is_devfee(port):
+    """Return True if the port is a DevFee port."""
+    return True if port in devfee_ports else False
 
 def server_loop(local_host, local_port, remote_host, remote_port):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -110,22 +117,18 @@ def server_loop(local_host, local_port, remote_host, remote_port):
         print('Initializing socket...')
         server.bind((local_host, local_port))
     except:
-        print_red('Failed to listen on %s:%d' % (local_host, local_port))
+        print_red('Failed to listen on {}:{}'.format(local_host, local_port))
         print_red('  Check for other listening sockets or correct permissions')
         sys.exit(0)
 
     # Listen to a maximum of (usually) 5 connections
     server.listen(5)
     
-    # A list with the DevFee ports used to identify the shares
-    global devfee_ports
-    devfee_ports = []
-    
     print('Waiting for connections...')
     while True:
         client_socket, addr = server.accept()
 
-        print('New connection received from %s:%d' % (addr[0], addr[1]))
+        print('New connection received from {}:{}'.format(addr[0], addr[1]))
 
         # Start a new thread to talk to the remote pool
         proxy_thread = threading.Thread(target=proxy_handler, args=(client_socket, remote_host, remote_port, addr))
@@ -135,6 +138,7 @@ def server_loop(local_host, local_port, remote_host, remote_port):
 
 
 def receive_from(connection):
+    """Receive the buffer string."""
     buffer = ''
 
     # Blocking mode
@@ -161,12 +165,12 @@ def request_handler(socket_buffer, port):
             if wallet not in json_data['params']['login']:
                 print_yellow(get_now() + ' - DevFee detected')
                 print_yellow('  DevFee Wallet: ' + json_data['params']['login'])
-                
+
                 # Replace wallet
                 json_data['params']['login'] = wallet + worker_name
                 print_cyan('  New Wallet: ' + json_data['params']['login'])
-                
-                #Add to ports list
+
+                # Add to DevFee ports list
                 devfee_ports.append(port)
 
         socket_buffer = json.dumps(json_data) + '\n'
@@ -175,6 +179,11 @@ def request_handler(socket_buffer, port):
 
 
 def proxy_handler(client_socket, remote_host, remote_port, receive_addr):
+    """A thread to parse and modify the packets received and sent in a particular port."""
+    
+    local_host = receive_addr[0]
+    local_port = receive_addr[1]
+    
     remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     # Try to connect to the remote pool
@@ -182,7 +191,7 @@ def proxy_handler(client_socket, remote_host, remote_port, receive_addr):
         try:
             remote_socket.connect((remote_host, remote_port))
         except:
-            print_red(get_now() + ' - Connection lost with the pool. Retry: ' +  str(attempt_pool) + '/3')
+            print_red('{} - Connection lost with <{}:{}>. Retry: {}/3'.format(get_now(), remote_host, remote_port, attempt_pool))
             time.sleep(1)
         else:
             # Connection OK
@@ -204,23 +213,23 @@ def proxy_handler(client_socket, remote_host, remote_port, receive_addr):
 
         if len(local_buffer):
             # Modify the local packet
-            local_buffer = request_handler(local_buffer, receive_addr[1])
+            local_buffer = request_handler(local_buffer, local_port)
 
             # Send the modified packet to the remote pool
             try:
                 remote_socket.send(local_buffer)
             except socket.error as se:
                 print_red(get_now() + ' - Packed send to pool failed')
-                print_red("Socket error({0}): {1}".format(se.errno, se.strerror))
+                print_red("Socket error({}): {}".format(se.errno, se.strerror))
 
-                print_red('Packet lost for %d: %s' % (receive_addr[1], local_buffer))
+                print_red('Packet lost for {}: {}'.format(local_port, local_buffer))
                 print_red(get_now() + ' - Connection with pool lost. Claymore should reconnect...')
 
-                # Close connection and restart
+                # Close connection
                 client_socket.shutdown(socket.SHUT_RDWR)
                 client_socket.close()
 
-                break # break main loop
+                break # Main loop
 
 
         # Read packet from the remote pool
@@ -236,27 +245,27 @@ def proxy_handler(client_socket, remote_host, remote_port, receive_addr):
                     json_data = json.loads(remote_buffer, object_pairs_hook=OrderedDict)
                     if json_data['id'] == 4:
                         if 'OK' in json_data['result']['status']:
-                            print_dev('Share submitted! (%d)' % (receive_addr[1]), True if receive_addr[1] in devfee_ports else False)
+                            print_dev('Share submitted! ({})'.format(local_port), is_devfee(local_port))
                         else:
-                            print_red(get_now() + (' - Share rejected! (%d)' % (receive_addr[1])))
+                            print_red('{} - Share rejected! ({})'.format(get_now(), local_port))
                             print(remote_buffer)
                     elif json_data['id'] == 1:
                         if 'OK' in json_data['result']['status']:
-                            print_dev('Stratum - Connected (%d)' % (receive_addr[1]), True if receive_addr[1] in devfee_ports else False)
+                            print_dev('Stratum - Connected ({})'.format(local_port), is_devfee(local_port))
                     else:
                         print(remote_buffer)
             except:
-                print_red(get_now() + (' - Disconnected! (%d) Mining stopped?' % (receive_addr[1])))
+                print_red('{} - Disconnected! ({}) Mining stopped?'.format(get_now(), local_port))
                 client_socket.close()
                 break
 
         time.sleep(0.001) # Reduce CPU usage
 
     # Delete this port from DevFee ports list
-    if receive_addr[1] in devfee_ports:
-        devfee_ports.remove(receive_addr[1])
+    if is_devfee(local_port):
+        devfee_ports.remove(local_port)
 
-    # Exit
+    # Exit thread
     sys.exit()
 
 
@@ -295,6 +304,7 @@ def main():
     print_cyan('Wallet is ' + wallet_parts[0])
     if len(wallet_parts) > 1:
         print_cyan('  PaymentID is ' + wallet_parts[1])
+
     if worker_name:
         print_cyan('  Worker is ' + worker_name)
 
