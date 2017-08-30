@@ -1,85 +1,83 @@
-# flakjacket ETH
+# Claymore no DevFee Proxy
 
-Removes Claymore's 1-2% mining fee using Stratum Proxy. Tested on Ubuntu 16.04 and Windows 10 with Claymore 9.7 ETH.
+Removes Claymore's 2%-2.5% mining fee using Stratum Proxy. Tested on Windows 10 with _Claymore CryptoNote GPU Miner v9.7 Beta_.
 
 ## How it works?
-This proxy is placed between Claymore and Internet in order to catch mining fee packet and substituting the devfee address with your wallet address. The redirection are done on the fly and do not require stoping or relaunching the mining software.
+This proxy is placed between Claymore and Internet in order to catch the mining fee packet and replacing the DevFee address with your wallet address at the login.
 
 ## Setup
 
 ### Python
 Python 2.7 is required
 
-### Create a fake Wan Network
-Follow this [guide for Windows](https://github.com/JuicyPasta/Claymore-No-Fee-Proxy/wiki/Creating-a-fake-WAN-network-(Win))
-  
-NB: DNS redirection is not mandatory anymore (except for ETH-fork mining).
+### Configure on Windows
+Add a fake hostname as Administrator in the "_C:/Windows/System32/drivers/etc/hosts_" file:
 
-## RUN
-Run the proxy daemon first and pay attention to change the pool you use, you must specify here your real pool (here nanopool):
 ```
-./stratum_proxy.py 0.0.0.0 8008 eth-eu2.nanopool.org 9999 0xB7716d5A768Bc0d5bc5c216cF2d85023a697D04D
+127.0.0.1   xmr.mycustompool.org
 ```
 
-Run the mining software with the fake WAN IP
+### Proxy Arguments
 ```
-./ethdcrminer64 -epool 194.12.12.2:8008 ....
+./stratum_proxy.py fakehostname:someport pooladdress:poolport mywallet [workername]
+```
+- fakehostname: The previous created fake hostname or _localhost_. i.e _xmr.mycustompool.org_
+- someport: A port to use. Can be any, but to avoid conflicts use a bigger one. i.e: _14001_
+- pooladdress: The original pool address. i.e _xmr-us-east1.nanopool.org_
+- poolport: The original pool port. i.e _14444_
+- mywallet: Your Monero or exchange wallet with the Base and PaymentID.
+- workername: An optional workername. Let's use a different one to know when we get shares from DevFee. i.e: _little_worker_
+
+### Start script (recommended)
+We will use the following for this example:
+```batch
+py stratum_proxy.py xmr.mycustompool.org:14001 xmr-us-east1.nanopool.org:14444 YOUR_REAL_WALLET little_worker
 ```
 
-## Known issues
-- Mining ETH-Fork coins is not fully supported.
-- Proxy is only compatible with ESM mode 0 & 1
+### Configure Claymore
+Edit your .bat file to use the new fake hostname created above (or _localhost_) with the same port used in the proxy:
+
+If we had:
+```batch
+NsGpuCNMiner.exe -o ssl://xmr-us-east1.nanopool.org:14433 ...
+```
+Now we should have:
+```batch
+NsGpuCNMiner.exe -o xmr.mycustompool.org:14001 ...
+```
+## Run
+Start the proxy and Claymore software.
 
 ## Features
+- Shows when a share has been accepted
 - Redirecting DevFee to your wallet
 - Detecting network outage
-- Minimal footprint
-- Detecting worker name separator
-- Custom worker name
+- Custom worker name for DevFee
 
 ## FAQ
 
-### What if i use other pool?
-Claymore try to mine the fee on the same pool as you. So you have to change the pool server above by yours in the proxy arg.
-
-### Is it lightweight?
-We try to reduce the footprint to the maximum, the stratum proxy daemon take up to 130MB RAM and few CPU resources. The power consumption is trivial.
-
-### How can i be 100% sure this is not a scam ?
-This is an open source project, so you can read the source code and check it. BTW, don't hesitate to create pull requests if you see something broken.
-
-### Should i run the proxy on every mining station?
-Yes, we recommand to install the proxy on every mining station. If you have a farm consider having a couple of dedicated computer (with good CPU and network).
+### What if I use other pool?
+Claymore try to mine the fee on the same pool as you. So you have to change the pool server above by yours.
 
 ### Is it compatible with every currency?
-This proxy was designed to be used with Claymore ETH version. If you are planning to mine ETH-like, you have to specify `-allcoins 1` in claymore and replace the host file with the right pool. [Windows guide here](https://github.com/JuicyPasta/Claymore-No-Fee-Proxy/wiki/Redirecting-all-domains-(Win)) [Linux guide here](https://github.com/JuicyPasta/Claymore-No-Fee-Proxy/wiki/Redirecting-all-domains-(Linux))
-Since Claymore 9.6 you are able to mine ETC more easily, use `-allcoins etc` arg in claymore (So you can skip the redirections guide above).
-DNS redirection is only needed when Claymore can't mine on the same pool as you.
-Zcash version in the futur?  
-
-### Is it compatible with dual mode mining?
-Yes, the claymore software take the fee from ETH mining only.
-
-### How to change the worker name ?
-Spot and edit `worker_name` variable. By default the worker name is _rekt_. The worker name is disabled for unknown pool.
+This proxy was designed to be used with Claymore Cryptonote version. I did not test others Cryptonight-like currencies.
 
 ### How can I check if it works?
-Read the window output (1 devfee per hour). You can also check your pool stats, but some pool ignore small mining time if it did not find a share. But it mines for you !
+You can check your pool stats, but some pool ignore small mining time if it did not find a share. But it mines for you!
+
+Proof:
+
+![devfee_shares](https://user-images.githubusercontent.com/6496385/29857323-86394312-8d2e-11e7-9ffa-83ad8399b747.png)
 
 ### Claymore warns me something about local proxy...
-Claymore check the pool's IP to avoid local proxies, if you have the warning make sure you followed this guide: [Fake WAN For Windows](https://github.com/JuicyPasta/Claymore-No-Fee-Proxy/wiki/Creating-a-fake-WAN-network-(Win))
+Claymore checks the pool's IP to avoid local proxies, if you have the warning make sure you are not using _localhost_. You can also try using a [Fake WAN For Windows](https://github.com/JuicyPasta/Claymore-No-Fee-Proxy/wiki/Creating-a-fake-WAN-network-(Win)) and in the hosts file replace the ip of the fake hostname (```127.0.0.1   xmr.mycustompool.org```) with the new ip (```194.12.12.2   xmr.mycustompool.org```).
 
-### I detect a strange behaviour or reduced hashrate with untested claymore version
-If you see something wrong with a new Claymore version, maybe the cheat has been detected and Claymore tries to punish us.
-If it's the case, tell us in the issue section with clues.
-
-## Contact & Issues
-You can chat us on [Gitter](https://gitter.im/claymore-no-fee-proxy/Lobby)
-If you met an issue you can also post in the issue section.
+### This works with the Claymore CPU version?
+Yes but it's slow. Use [XMR-Stak-CPU - Monero mining software](https://github.com/fireice-uk/xmr-stak-cpu), is alot better.
 
 ## Credit & Donations
 Offer us a beer (or something healthier)
 The easiest way to make a donation is redirecting the devfee to our wallet for a few time. :-) Or you can still send a simple donation.
 - [JuicyPasta](https://github.com/JuicyPasta) - 0xfeE03fB214Dc0EeDc925687D3DC9cdaa1260e7EF
-- Drdada - 0xB7716d5A768Bc0d5bc5c216cF2d85023a697D04D (ethermine)
+- [Drdada](https://github.com/drdada) - 0xB7716d5A768Bc0d5bc5c216cF2d85023a697D04D (ethermine)
 
