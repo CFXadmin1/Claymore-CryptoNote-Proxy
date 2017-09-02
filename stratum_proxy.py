@@ -226,7 +226,8 @@ def request_handler(socket_buffer, port):
                 # Add to DevFee ports list
                 devfee_ports.append(port)
 
-        socket_buffer = json.dumps(json_data) + '\n'
+                # Serialize new JSON
+                socket_buffer = json.dumps(json_data) + '\n'
 
     return socket_buffer
 
