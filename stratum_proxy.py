@@ -12,13 +12,17 @@ import time
 from datetime import datetime
 from collections import OrderedDict
 
-is_windows = 0 if os.name=='nt' else 1
-if is_windows == 0:
+is_windows = 1 if os.name=='nt' else 0
+if is_windows:
     from ctypes import windll, Structure, c_short, c_ushort, byref
 
 # A list with the DevFee ports used to identify the shares
 global devfee_ports
 devfee_ports = []
+
+# List with shares count
+global total_shares
+total_shares = [0,0,0] # Normal, DevFee, Rejected
 
 # winbase.h
 STD_INPUT_HANDLE = -10
@@ -26,14 +30,14 @@ STD_OUTPUT_HANDLE = -11
 STD_ERROR_HANDLE = -12
 
 # wincon.h
-FOREGROUND_BLACK     = [0x0000, '\033[30m']
-FOREGROUND_BLUE      = [0x0001, '\033[94m']
-FOREGROUND_GREEN     = [0x0002, '\033[92m']
-FOREGROUND_CYAN      = [0x0003, '\033[96m']
-FOREGROUND_RED       = [0x0004, '\033[91m']
-FOREGROUND_MAGENTA   = [0x0005, '\033[94m']
-FOREGROUND_YELLOW    = [0x0006, '\033[93m']
-FOREGROUND_GREY      = [0x0007, '\033[97m']
+FOREGROUND_BLACK     = ['\033[30m', 0x0000]
+FOREGROUND_BLUE      = ['\033[94m', 0x0001]
+FOREGROUND_GREEN     = ['\033[92m', 0x0002]
+FOREGROUND_CYAN      = ['\033[96m', 0x0003]
+FOREGROUND_RED       = ['\033[91m', 0x0004]
+FOREGROUND_MAGENTA   = ['\033[94m', 0x0005]
+FOREGROUND_YELLOW    = ['\033[93m', 0x0006]
+FOREGROUND_GREY      = ['\033[97m', 0x0007]
 FOREGROUND_INTENSITY = 0x0008
 
 
@@ -41,7 +45,7 @@ def get_text_attr():
     """Return the character attributes (colors) of the console screen
     buffer."""
 
-    if is_windows == 0:
+    if is_windows:
         SHORT = c_short
         WORD = c_ushort
 
@@ -79,7 +83,7 @@ def set_text_attr(color):
     """Set the character attributes (colors) of the console screen
     buffer. Color is a combination of foreground and background color,
     foreground and background intensity."""
-    if is_windows == 0:
+    if is_windows:
         windll.kernel32.SetConsoleTextAttribute(windll.kernel32.GetStdHandle(STD_OUTPUT_HANDLE), color)
     else:
         print color,
@@ -95,6 +99,41 @@ def print_green(args): print_color(args, FOREGROUND_GREEN[is_windows])
 def print_red(args): print_color(args, FOREGROUND_RED[is_windows])
 def print_cyan(args): print_color(args, FOREGROUND_CYAN[is_windows])
 def print_yellow(args): print_color(args, FOREGROUND_YELLOW[is_windows])
+
+class _Getch:
+    """Gets a single character from standard input.  Does not echo to the screen."""
+    def __init__(self):
+        if is_windows:
+            self.impl = _GetchWindows()
+        else:
+            self.impl = _GetchUnix()
+
+    def __call__(self): return self.impl()
+
+class _GetchUnix:
+    def __init__(self):
+        import tty, sys
+
+    def __call__(self):
+        import sys, tty, termios
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(sys.stdin.fileno())
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
+
+class _GetchWindows:
+    def __init__(self):
+        import msvcrt
+
+    def __call__(self):
+        import msvcrt
+        return msvcrt.getch()
+
+getch = _Getch()
 
 def get_now():
     """Return the current time."""
@@ -123,7 +162,12 @@ def server_loop(local_host, local_port, remote_host, remote_port):
 
     # Listen to a maximum of (usually) 5 connections
     server.listen(5)
-    
+
+    # Start keyboard input thread
+    kbd_thread = threading.Thread(target=key_listener)
+    kbd_thread.daemon = False
+    kbd_thread.start()
+
     print('Waiting for connections...')
     while True:
         client_socket, addr = server.accept()
@@ -133,9 +177,18 @@ def server_loop(local_host, local_port, remote_host, remote_port):
         # Start a new thread to talk to the remote pool
         proxy_thread = threading.Thread(target=proxy_handler, args=(client_socket, remote_host, remote_port, addr))
         proxy_thread.daemon = False # Python program can exit shutting down the thread abruptly
-
         proxy_thread.start()
 
+        
+def key_listener():
+    """Read keyboard input."""
+    while True:
+        char = getch()
+        if 's' in char:
+            print_cyan('Total Shares: {}, Normal: {}, DevFee: {}, Rejected: {}'
+                .format(sum(total_shares), total_shares[0], total_shares[1], total_shares[2]))
+
+        time.sleep(0.1) # Reduce CPU usage
 
 def receive_from(connection):
     """Receive the buffer string."""
@@ -220,9 +273,9 @@ def proxy_handler(client_socket, remote_host, remote_port, receive_addr):
                 remote_socket.send(local_buffer)
             except socket.error as se:
                 print_red(get_now() + ' - Packed send to pool failed')
-                print_red("Socket error({}): {}".format(se.errno, se.strerror))
+                print_red('  Socket error({}): {}'.format(se.errno, se.strerror))
 
-                print_red('Packet lost for {}: {}'.format(local_port, local_buffer))
+                print_red('  Packet lost for {}: {}'.format(local_port, local_buffer))
                 print_red(get_now() + ' - Connection with pool lost. Claymore should reconnect...')
 
                 # Close connection
@@ -246,8 +299,10 @@ def proxy_handler(client_socket, remote_host, remote_port, receive_addr):
                     if json_data['id'] == 4:
                         if 'OK' in json_data['result']['status']:
                             print_dev('Share submitted! ({})'.format(local_port), is_devfee(local_port))
+                            total_shares[1 if is_devfee(local_port) else 0] += 1
                         else:
                             print_red('{} - Share rejected! ({})'.format(get_now(), local_port))
+                            total_shares[2] += 1
                             print(remote_buffer)
                     elif json_data['id'] == 1:
                         if 'OK' in json_data['result']['status']:
@@ -318,14 +373,13 @@ def main():
         else:
             print_red('Unknown pool - Ignoring worker name')
 
-    print '\nBased on https://github.com/JuicyPasta/Claymore-No-Fee-Proxy by JuicyPasta & Drdada\n'
-    print 'As Claymore v9.7 beta, the DevFee logins at the start and takes some hashes all the time,'
-    print 'like 1 hash every 39 of yours (there is not connection/disconections for devfee like in ETH).'
-    print 'This proxy tries to replace the wallet in every login detected that is not your wallet.'
-    print ''
+    print('Based on https://github.com/JuicyPasta/Claymore-No-Fee-Proxy by JuicyPasta & Drdada')
+    print('As Claymore v9.7 beta, the DevFee logins at the start and takes some hashes all the time, '
+          'like 1 hash every 39 of yours (there is not connection/disconections for devfee like in ETH). '
+          'This proxy tries to replace the wallet in every login detected that is not your wallet.\n')
     print_yellow('Indentified DevFee shares are printed in yellow')
     print_green('Your shares are printed in green')
-    print ''
+    print('Press "s" for current statistics\n')
 
     # Listening loop
     server_loop(local_host, local_port, remote_host, remote_port)
