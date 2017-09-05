@@ -313,7 +313,8 @@ def proxy_handler(client_socket, remote_host, remote_port, receive_addr):
             except:
                 print_red('{} - Disconnected! ({}) Mining stopped?'.format(get_now(), local_port))
                 client_socket.close()
-                break
+                
+                break # Main loop
 
         time.sleep(0.001) # Reduce CPU usage
 
