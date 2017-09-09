@@ -18,7 +18,7 @@ This proxy is placed between Claymore and Internet in order to catch the mining 
     "ssl": "true"
 }
 ```
-- **local_host**: IP/host name and Port to use as the proxy/server. Do **NOT** use "127.0.0.1" or "localhost", see the link [below](#Configure-a-custom-IP-and-host-name-in-Windows).
+- **local_host**: IP/host name and Port to use as the proxy/server. Do **NOT** use "127.0.0.1" or "localhost", see [Adding a custom IP and Hostname in the Wiki](https://github.com/NanMetal/Claymore-CryptoNote-Proxy/wiki/Add-a-custom-IP-and-host-name).
 - **pool_address**: The pool address. For SSL/TLS you can prefix with ssl://
 - **wallet**: Your Monero or exchange wallet with the Base and PaymentID.
 - **worker**: Worker name for the DevFee. Can be "null".
@@ -31,15 +31,15 @@ See [Adding a custom IP and Hostname in the Wiki](https://github.com/NanMetal/Cl
 ### Configure Claymore
 Edit your ```.bat``` or ```config.txt``` file with the ```local_host``` IP/host name used in the proxy:
 ```batch
--o ssl://xmr.mycustompool.org:14001 ...
+-o stratum+tcp://xmr.mycustompool.org:14001 ...
 ```
 
 ## Run
-Double click ```stratum_proxy.exe``` and Claymore software.
+Start ```stratum_proxy.exe``` and Claymore software.
 
 ## Features
 * Redirect DevFee shares to your wallet
-* Supports SSL/TLS (only pool connection)
+* Support SSL/TLS (only pool connection)
 * Shows shares accepted, rejected and DevFee
 * Custom worker name for DevFee
 * Low CPU and memory usage
