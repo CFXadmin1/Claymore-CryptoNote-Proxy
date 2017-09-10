@@ -14,6 +14,14 @@ namespace stratum_proxy
 {
     class Program
     {
+        // Local server address
+        private static IPEndPoint LocalEndPoint;
+        private static string LocalHostName;
+
+        // Main remote pool address
+        private static IPEndPoint PoolEndPoint;
+        private static string PoolHostName;
+
         // Main wallet
         static string Wallet = string.Empty;
 
@@ -24,10 +32,7 @@ namespace stratum_proxy
         static bool IsSSL = false;
 
         // List with the DevFee ports used to identify the shares
-        static List<int> DevFeePorts = new List<int>();
-
-        // List with all the connected clients
-        static List<int> ConnectedPorts = new List<int>();
+        static List<int> DevFeeList = new List<int>();
 
         // List with shares count
         static int[] TotalShares = { 0, 0, 0 }; // Normal, DevFee, Rejected
@@ -35,8 +40,7 @@ namespace stratum_proxy
         /// <summary>
         /// Main method.
         /// </summary>
-        /// <param name="args">Arguments.</param>
-        static void Main(string[] args)
+        static void Main()
         {
             if (!File.Exists("proxy.txt"))
             {
@@ -46,7 +50,7 @@ namespace stratum_proxy
     ""pool_address"": ""xmr-us-east1.nanopool.org:14433"",
     ""wallet"": ""MYWALLET"",
     ""worker"": ""little_worker"",
-    ""ssl"": ""true""
+    ""ssl"": true
 }";
                 string help = @"Configuration file help:
 local_host      - IP to use as the proxy/server.
@@ -68,16 +72,19 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
             // Header
             Console.Write('\n');
             Console.WriteLine("╔═════════════════════════════════════════════════════════════════╗");
-            Console.WriteLine("║             Claymore CryptoNote Stratum Proxy  v1.2             ║");
+            Console.WriteLine("║             Claymore CryptoNote Stratum Proxy  v1.3             ║");
             Console.WriteLine("╚═════════════════════════════════════════════════════════════════╝");
 
-            string[] newArgs = ReadConfig();
-            if (newArgs != null)
+            JavaScriptSerializer serializer = new JavaScriptSerializer();
+
+            Dictionary<string, object> jsonConfig;
+            try
             {
+                jsonConfig = serializer.Deserialize<dynamic>(File.ReadAllText("proxy.txt"));
+                IsSSL = bool.Parse(jsonConfig["ssl"].ToString());
                 Console.WriteLine("Config loaded!");
-                args = newArgs;
             }
-            else if (args.Length == 0)
+            catch
             {
                 Console.WriteLine("Bad configuration file!");
                 Console.Read();
@@ -85,23 +92,23 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
             }
 
             // SSL/TLS
-            if (args.Length > 4 || args[1].StartsWith("ssl"))
-                IsSSL = bool.Parse(args[4]);
             if (IsSSL)
                 WriteLineColor(ConsoleColor.DarkMagenta, "Secure Socket Layer is enabled");
 
-            // Local host
-            string localHost = args[0].Split(':')[0];
-            int localPort = int.Parse(args[0].Split(':')[1]);
-            WriteLineColor(ConsoleColor.DarkCyan, $"Localhost is {args[0]}");
+            // Local server
+            string[] localHost = jsonConfig["local_host"].ToString().Split(':');
+            LocalEndPoint = new IPEndPoint(Dns.GetHostEntry(localHost[0]).AddressList[0], int.Parse(localHost[1]));
+            LocalHostName = localHost[0];
+            WriteLineColor(ConsoleColor.DarkCyan, $"Local server is {localHost[0]}:{localHost[1]}");
 
-            // Remote host (pool)
-            string remoteHost = args[1].Split(':')[0];
-            int remotePort = int.Parse(args[1].Split(':')[1]);
-            WriteLineColor(ConsoleColor.DarkCyan, $"Main pool is {args[1]}");
+            // Remote pool
+            string[] remoteHost = jsonConfig["pool_address"].ToString().Split(':');
+            PoolEndPoint = new IPEndPoint(Dns.GetHostEntry(remoteHost[0]).AddressList[0], int.Parse(remoteHost[1]));
+            PoolHostName = remoteHost[0];
+            WriteLineColor(ConsoleColor.DarkCyan, $"Main pool is {remoteHost[0]}:{remoteHost[1]}");
 
             // Set wallet
-            Wallet = args[2];
+            Wallet = jsonConfig["wallet"].ToString().Trim();
 
             // Check if there is a PaymentID in the wallet
             string[] walletParts = Wallet.Split('.');
@@ -110,8 +117,11 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                 WriteLineColor(ConsoleColor.DarkCyan, $"  PaymentID is {walletParts[1]}");
 
             // Worker name
-            if (args.Length > 3)
-                WorkerName = args[3].ToLower() == "null" ? null : args[3];
+            if (jsonConfig.ContainsKey("worker") && jsonConfig["worker"] != null)
+                WorkerName = jsonConfig["worker"].ToString();
+            else
+                WorkerName = null;
+
             if (!string.IsNullOrEmpty(WorkerName))
             {
                 WriteLineColor(ConsoleColor.DarkCyan, $"  Worker is {WorkerName}");
@@ -119,9 +129,9 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                 // Check pool separator
                 string[] poolsDot = { "nanopool.org", "monerohash.com", "minexmr.com", "dwarfpool.com" };
                 string[] poolsPlus = { "xmrpool.eu" };
-                if (poolsDot.Any(x => remoteHost.Contains(x)))
+                if (poolsDot.Any(x => remoteHost[0].Contains(x)))
                     WorkerName = "." + WorkerName;
-                else if (poolsPlus.Any(x => remoteHost.Contains(x)))
+                else if (poolsPlus.Any(x => remoteHost[0].Contains(x)))
                     WorkerName = "+" + WorkerName;
                 else
                     WriteLineColor(ConsoleColor.DarkGray, "Pool worker separator not detected! Put it yourself in front of the worker name if it " +
@@ -130,8 +140,8 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
 
             // Info
             Console.WriteLine("Based on https://github.com/JuicyPasta/Claymore-No-Fee-Proxy by JuicyPasta & Drdada");
-            Console.WriteLine(@"As Claymore v9.7 beta, the DevFee logins at the start and takes some hashes all the time, " +
-                "like 1 hash every 39 of yours (there is not connection/disconections for devfee like in ETH). " +
+            Console.WriteLine("As Claymore v9.7 beta, the DevFee logins at the start and takes some hashes all the time,\n" +
+                "like 1 hash every 39 of yours (there is not connection/disconections for devfee like in ETH).\n " +
                 "This proxy tries to replace the wallet in every login detected that is not your wallet.\n");
             WriteLineColor(ConsoleColor.DarkYellow, "Indentified DevFee shares are printed in yellow");
             WriteLineColor(ConsoleColor.DarkGreen, "Your shares are printed in green\n");
@@ -141,44 +151,51 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
 
             Console.WriteLine("Press \"s\" for current statistics");
 
+            // Start keyboard input thread
+            Thread kbdThread = new Thread(() => KeyboardListener());
+            kbdThread.Start();
+
             // Listening loop
-            ServerLoop(localHost, localPort, remoteHost, remotePort);
+            while (true)
+            {
+                ServerLoop();
+                WriteLineColor(ConsoleColor.DarkRed, "Socket connection dropped! Retrying in 10 s...");
+                Thread.Sleep(10000);
+            }
         }
 
         /// <summary>
         /// Accepts and controls connections from the localhost to the remote pool and vice versa.
         /// </summary>
-        /// <param name="localHost">Local host IP or name.</param>
-        /// <param name="localPort">Local host port. Must be the same as the Claymore app.</param>
-        /// <param name="remoteHost">Remote pool address.</param>
-        /// <param name="remotePort">Remote pool port.</param>
-        static void ServerLoop(string localHost, int localPort, string remoteHost, int remotePort)
+        static void ServerLoop()
         {
             TcpListener server;
             try
             {
                 Console.WriteLine("Initializing socket...");
-                server = new TcpListener(new IPEndPoint(Dns.GetHostEntry(localHost).AddressList[0], localPort));
+                server = new TcpListener(LocalEndPoint);
                 server.Start();
             }
             catch
             {
-                WriteLineColor(ConsoleColor.DarkRed, $"Failed to listen on {localHost}:{localPort}");
+                WriteLineColor(ConsoleColor.DarkRed, $"Failed to listen on {LocalEndPoint} ({LocalHostName}:{LocalEndPoint.Port})");
                 WriteLineColor(ConsoleColor.DarkRed, "  Check for other listening sockets or correct permissions");
                 return;
             }
 
-            // Start keyboard input thread
-            Thread kbdThread = new Thread(() => KeyboardListener());
-            kbdThread.Start();
-
             Console.WriteLine("Waiting for connections...");
             while (true)
             {
-                TcpClient clientSocket = server.AcceptTcpClient();
+                if (server.Pending())
+                {
+                    TcpClient clientSocket = server.AcceptTcpClient();
 
-                // Start a new thread to talk to the remote pool
-                new Thread(() => ProxyHandler(clientSocket, remoteHost, remotePort)).Start();
+                    // Start a new thread to talk to the remote pool
+                    new Thread(() => ProxyHandler(clientSocket)).Start();
+                }
+
+                // Reduce CPU usage
+                Thread.Sleep(20);
             }
         }
 
@@ -186,14 +203,11 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
         /// Initializes a new thread for the specified port.
         /// </summary>
         /// <param name="clientSocket">Localhost client socket.</param>
-        /// <param name="remoteHost">Remote pool address.</param>
-        /// <param name="remotePort">Remote pool port.</param>
-        static void ProxyHandler(TcpClient clientSocket, string remoteHost, int remotePort)
+        static void ProxyHandler(TcpClient clientSocket)
         {
-            string localHost = ((IPEndPoint)clientSocket.Client.RemoteEndPoint).Address.ToString();
-            int localPort = ((IPEndPoint)clientSocket.Client.RemoteEndPoint).Port;
+            IPEndPoint clientEndPoint = (IPEndPoint)clientSocket.Client.RemoteEndPoint;
 
-            Console.WriteLine($"New connection received from {localHost}:{localPort}");
+            Console.WriteLine($"New connection received from {clientEndPoint}");
 
             Socket remoteSocket = null;
             TcpClient remoteClient = null;
@@ -206,21 +220,22 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                 {
                     if (IsSSL)
                     {
-                        remoteClient = new TcpClient(remoteHost, remotePort);
+                        remoteClient = new TcpClient(PoolHostName, PoolEndPoint.Port);
                         remoteSslStream = new SslStream(remoteClient.GetStream(), false,
                             new RemoteCertificateValidationCallback(ValidateServerCertificate), null);
-                        remoteSslStream.AuthenticateAsClient(remoteHost);
+                        remoteSslStream.AuthenticateAsClient(PoolHostName);
                     }
                     else
                     {
                         remoteSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                        remoteSocket.Connect(Dns.GetHostEntry(remoteHost).AddressList[0], remotePort);
+                        remoteSocket.Connect(PoolEndPoint);
                     }
                     break; // Connection OK
                 }
-                catch
+                catch(Exception e)
                 {
-                    WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Connection lost with <{remoteHost}:{remotePort}>. Retry: {i}/3");
+                    WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Connection lost with {PoolEndPoint}. Retry: {i}/3");
+                    WriteLineColor(ConsoleColor.DarkRed, $"  Exception: {e.Message}");
                     Thread.Sleep(1000);
                     if (i == 3)
                     {
@@ -255,7 +270,7 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                             Substring(indexMethod + 7, (request.IndexOf(",", indexMethod)) - (indexMethod + 7)).Trim();
 
                     // Modify the wallet
-                    request = RequestEdit(request, localPort);
+                    request = RequestEdit(request, clientEndPoint);
 
                     try
                     {
@@ -270,7 +285,7 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                     }
                     catch (SocketException se)
                     {
-                        WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Send to pool failed. {localPort}: {request}");
+                        WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Send to pool failed. {clientEndPoint}: {request}");
                         WriteLineColor(ConsoleColor.DarkRed, $"  Socket error({se.ErrorCode}): {se.Message}");
                         WriteLineColor(ConsoleColor.DarkRed, $"  Connection with pool lost. Claymore should reconnect...");
                         clientSocket.Close();
@@ -281,12 +296,12 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                 // Read packet from the remote pool
                 string poolResponse = string.Empty;
 
-                // If there was a request before, wait for pool response
-                if (lastRequestMethod.Length > 0)
+                // If there was a request before, wait for pool response or if data is available
+                if (lastRequestMethod.Length > 0 || remoteClient.Available > 0)
                     poolResponse = IsSSL ? ReceiveFromSSL(remoteSslStream) : ReceiveFrom(remoteSocket);
                 // If there is data available read it, otherwise skip
-                else if (remoteClient.Available > 0)
-                    poolResponse = IsSSL ? ReceiveFromSSL(remoteSslStream) : ReceiveFrom(remoteSocket);
+                //else if ()
+                //    poolResponse = IsSSL ? ReceiveFromSSL(remoteSslStream) : ReceiveFrom(remoteSocket);
 
                 if (poolResponse.Length > 0)
                 {
@@ -294,16 +309,17 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                     {
                         // Send the response to the local client (miner)
                         clientSocket.Client.Send(Encoding.UTF8.GetBytes(poolResponse));
-
-                        // Log accepted, DevFee, rejected shares and others
-                        LogResponse(poolResponse, localPort, lastRequestMethod);
                     }
-                    catch
+                    catch(SocketException se)
                     {
-                        WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Disconnected! ({localPort}) Mining stopped?");
+                        WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Disconnected! ({clientEndPoint}) Mining stopped?");
+                        WriteLineColor(ConsoleColor.DarkRed, $"  Socket error({se.ErrorCode}): {se.Message}");
                         clientSocket.Close();
                         break; // Main loop
                     }
+
+                    // Log accepted, DevFee, rejected shares and others
+                    LogResponse(poolResponse, clientEndPoint, lastRequestMethod);
                 }
 
                 // Reduce CPU usage
@@ -311,14 +327,14 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
             }
 
             // Delete this port from DevFee ports list
-            if (IsDevFee(localPort))
-                DevFeePorts.Remove(localPort);
+            if (IsDevFee(clientEndPoint.Port))
+                DevFeeList.Remove(clientEndPoint.Port);
         }
 
         /// <summary>
         /// Process the pending received data from the socket.
         /// </summary>
-        /// <param name="socket">Socket to use.</param>
+        /// <param name="socket">Socket to read.</param>
         /// <returns>String with the received data.</returns>
         static string ReceiveFrom(Socket socket)
         {
@@ -342,7 +358,7 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
         /// <summary>
         /// Process the pending received data from the SSL stream.
         /// </summary>
-        /// <param name="socket">SslStream to use.</param>
+        /// <param name="sslStream">SslStream to read.</param>
         /// <returns>String with the received data.</returns>
         static string ReceiveFromSSL(SslStream sslStream)
         {
@@ -364,10 +380,10 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
         /// <summary>
         /// Edit the specified request to put the Wallet.
         /// </summary>
-        /// <param name="request">Local buffer to use.</param>
-        /// <param name="localPort">Port of the buffer used to identify if it is DevFee.</param>
+        /// <param name="request">Request JSON string.</param>
+        /// <param name="clientEndPoint">Client EndPoint to identify if it is DevFee.</param>
         /// <returns>The modified local buffer with the expected wallet.</returns>
-        static string RequestEdit(string request, int localPort)
+        static string RequestEdit(string request, IPEndPoint clientEndPoint)
         {
             if (request.Contains("login"))
             {
@@ -386,7 +402,7 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                         WriteLineColor(ConsoleColor.DarkCyan, $"  New Wallet: {jsonData["params"]["login"]}");
 
                         // Add to DevFee ports list
-                        DevFeePorts.Add(localPort);
+                        DevFeeList.Add(clientEndPoint.Port);
 
                         // Serialize new JSON
                         request = serializer.Serialize(jsonData);
@@ -408,29 +424,29 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
         /// <summary>
         /// Prints to the console the response from the remote pool.
         /// </summary>
-        /// <param name="responseBuffer">Buffer received from the remote pool.</param>
-        /// <param name="clientPort">Port used on the remote pool client.</param>
+        /// <param name="response">Buffer received from the remote pool.</param>
+        /// <param name="clientEndPoint">Client connected to the pool.</param>
         /// <param name="requestMethod">The requested method used to get this response.</param>
-        static void LogResponse(string response, int clientPort, string requestMethod)
+        static void LogResponse(string response, IPEndPoint clientEndPoint, string requestMethod)
         {
             dynamic jsonData = new JavaScriptSerializer().Deserialize<dynamic>(response);
 
             if (requestMethod.Contains("login"))
             {
-                WriteLineColor(IsDevFee(clientPort) ? ConsoleColor.DarkYellow : ConsoleColor.DarkGreen,
-                    $"{GetNow()} - Stratum - Connected ({clientPort})");
+                WriteLineColor(IsDevFee(clientEndPoint.Port) ? ConsoleColor.DarkYellow : ConsoleColor.DarkGreen,
+                    $"{GetNow()} - Stratum - Connected ({clientEndPoint})");
             }
             else if (requestMethod.Contains("submit"))
             {
                 if (jsonData["result"]["status"] == "OK")
                 {
-                    WriteLineColor(IsDevFee(clientPort) ? ConsoleColor.DarkYellow : ConsoleColor.DarkGreen,
-                        $"{GetNow()} - Share submitted! ({clientPort})");
-                    TotalShares[IsDevFee(clientPort) ? 1 : 0] += 1;
+                    WriteLineColor(IsDevFee(clientEndPoint.Port) ? ConsoleColor.DarkYellow : ConsoleColor.DarkGreen,
+                        $"{GetNow()} - Share submitted! ({clientEndPoint})");
+                    TotalShares[IsDevFee(clientEndPoint.Port) ? 1 : 0] += 1;
                 }
                 else
                 {
-                    WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Share rejected! ({clientPort})");
+                    WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Share rejected! ({clientEndPoint})");
                     TotalShares[2] += 1;
                 }
             }
@@ -469,7 +485,7 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
         /// <returns>True if it is a DevFee port; otherwise, false.</returns>
         static bool IsDevFee(int port)
         {
-            return DevFeePorts.Contains(port);
+            return DevFeeList.Contains(port);
         }
 
         /// <summary>
@@ -491,33 +507,6 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
         static string GetNow()
         {
             return DateTime.Now.ToString("dd/MM/yy HH:mm:ss");
-        }
-
-        /// <summary>
-        /// Reads the configuration from proxy.txt.
-        /// </summary>
-        /// <returns>New arguments to use with the main method.</returns>
-        static string[] ReadConfig()
-        {
-            if (!File.Exists("proxy.txt"))
-                return null;
-
-            JavaScriptSerializer serializer = new JavaScriptSerializer();
-            try
-            {
-                dynamic jsonData = serializer.Deserialize<dynamic>(File.ReadAllText("proxy.txt"));
-                string[] newArgs = new string[5];
-                newArgs[0] = jsonData["local_host"];
-                newArgs[1] = jsonData["pool_address"];
-                newArgs[2] = jsonData["wallet"];
-                newArgs[3] = jsonData["worker"];
-                newArgs[4] = jsonData["ssl"];
-                return newArgs;
-            }
-            catch
-            {
-                return null;
-            }
         }
     }
 }
