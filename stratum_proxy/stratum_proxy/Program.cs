@@ -72,7 +72,7 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
             // Header
             Console.Write('\n');
             Console.WriteLine("╔═════════════════════════════════════════════════════════════════╗");
-            Console.WriteLine("║             Claymore CryptoNote Stratum Proxy  v1.3             ║");
+            Console.WriteLine("║            Claymore CryptoNote Stratum Proxy  v1.3.1            ║");
             Console.WriteLine("╚═════════════════════════════════════════════════════════════════╝");
 
             JavaScriptSerializer serializer = new JavaScriptSerializer();
