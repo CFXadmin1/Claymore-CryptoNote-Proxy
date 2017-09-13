@@ -158,9 +158,15 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
             // Listening loop
             while (true)
             {
-                ServerLoop();
-                WriteLineColor(ConsoleColor.DarkRed, "Socket connection dropped! Retrying in 10 s...");
-                Thread.Sleep(10000);
+                try
+                {
+                    ServerLoop();
+                }
+                catch
+                {
+                    WriteLineColor(ConsoleColor.DarkRed, "Socket connection dropped! Retrying in 10 s...");
+                    Thread.Sleep(10000);
+                }
             }
         }
 
@@ -191,7 +197,8 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                     TcpClient clientSocket = server.AcceptTcpClient();
 
                     // Start a new thread to talk to the remote pool
-                    new Thread(() => ProxyHandler(clientSocket)).Start();
+                    Thread thread = new Thread(() => ProxyHandler(clientSocket));
+                    thread.Start();
                 }
 
                 // Reduce CPU usage
@@ -291,6 +298,14 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                         clientSocket.Close();
                         break; // Main loop
                     }
+                    catch(Exception ex)
+                    {
+                        WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Send to pool failed. {clientEndPoint}: {request}");
+                        WriteLineColor(ConsoleColor.DarkRed, $"  Generic Exception: {ex}");
+                        WriteLineColor(ConsoleColor.DarkRed, $"  Connection with pool lost. Claymore should reconnect...");
+                        clientSocket.Close();
+                        break; // Main loop
+                    }
                 }
 
                 // Read packet from the remote pool
@@ -299,9 +314,6 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                 // If there was a request before, wait for pool response or if data is available
                 if (lastRequestMethod.Length > 0 || remoteClient.Available > 0)
                     poolResponse = IsSSL ? ReceiveFromSSL(remoteSslStream) : ReceiveFrom(remoteSocket);
-                // If there is data available read it, otherwise skip
-                //else if ()
-                //    poolResponse = IsSSL ? ReceiveFromSSL(remoteSslStream) : ReceiveFrom(remoteSocket);
 
                 if (poolResponse.Length > 0)
                 {
@@ -317,9 +329,25 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                         clientSocket.Close();
                         break; // Main loop
                     }
+                    catch (Exception ex)
+                    {
+                        WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Send to pool failed. {clientEndPoint}: {request}");
+                        WriteLineColor(ConsoleColor.DarkRed, $"  Generic Exception: {ex}");
+                        WriteLineColor(ConsoleColor.DarkRed, $"  Connection with pool lost. Claymore should reconnect...");
+                        clientSocket.Close();
+                        break; // Main loop
+                    }
 
-                    // Log accepted, DevFee, rejected shares and others
-                    LogResponse(poolResponse, clientEndPoint, lastRequestMethod);
+                    // Just in case, it can happen
+                    try
+                    {
+                        // Log accepted, DevFee, rejected shares and others
+                        LogResponse(poolResponse, clientEndPoint, lastRequestMethod);
+                    }
+                    catch
+                    {
+                        WriteLineColor(ConsoleColor.DarkGray, $"{GetNow()} - Error logging status. Nothing to worry about.");
+                    }
                 }
 
                 // Reduce CPU usage
