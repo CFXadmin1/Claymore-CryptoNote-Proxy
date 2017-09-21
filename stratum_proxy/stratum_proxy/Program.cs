@@ -34,8 +34,8 @@ namespace stratum_proxy
         // List with the DevFee ports used to identify the shares
         static List<int> DevFeeList = new List<int>();
 
-        // List with shares count
-        static int[] TotalShares = { 0, 0, 0 }; // Normal, DevFee, Rejected
+        // Lists with shares count & errors
+        static ShareCounter TotalShares = new ShareCounter();
 
         /// <summary>
         /// Main method.
@@ -470,22 +470,18 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                 {
                     WriteLineColor(IsDevFee(clientEndPoint.Port) ? ConsoleColor.DarkYellow : ConsoleColor.DarkGreen,
                         $"{GetNow()} - Share submitted! ({clientEndPoint})");
-                    TotalShares[IsDevFee(clientEndPoint.Port) ? 1 : 0] += 1;
+                    TotalShares.Add(IsDevFee(clientEndPoint.Port), false);
                 }
                 else
                 {
                     WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Share rejected! ({clientEndPoint})");
-                    TotalShares[2] += 1;
+                    TotalShares.Add(false, true);
                 }
             }
 
             int error = response.LastIndexOf("error");
-            if (error > 0)
-                if (!response.Substring(error).Contains("null"))
-                {
-                    WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Error: " + response);
-                }
-
+            if (error > 0 && jsonData["error"] != null)
+                WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Error {jsonData["error"]["code"]}: {jsonData["error"]["message"]}");
         }
 
         /// <summary>
@@ -498,8 +494,7 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                 ConsoleKeyInfo key = Console.ReadKey(true);
                 if (key.Key == ConsoleKey.S)
                 {
-                    WriteLineColor(ConsoleColor.DarkCyan,
-                        $"Total Shares: {TotalShares[0]}, DevFee: {TotalShares[1]}, Rejected: {TotalShares[2]}");
+                    WriteLineColor(ConsoleColor.DarkCyan, TotalShares.ToString());
                 }
 
                 Thread.Sleep(10);
@@ -535,6 +530,44 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
         static string GetNow()
         {
             return DateTime.Now.ToString("dd/MM/yy HH:mm:ss");
+        }
+    }
+
+    public class ShareCounter
+    {
+        /// <summary>
+        /// Normal shares count.
+        /// </summary>
+        public int Shares { get; private set; }
+        
+        /// <summary>
+        /// Developer Fee shares count.
+        /// </summary>
+        public int DevFeeShares { get; private set; }
+
+        /// <summary>
+        /// Rejected shares count.
+        /// </summary>
+        public int RejectedShares { get; private set; }
+
+        /// <summary>
+        /// Add a share.
+        /// </summary>
+        /// <param name="isDevFee">Set to true if it is a DevFee share; otherwise, false.</param>
+        /// <param name="rejected">Set to true if it is a rejected share; otherwise, false.</param>
+        public void Add(bool isDevFee, bool rejected)
+        {
+            if (rejected)
+                RejectedShares++;
+            else if (isDevFee)
+                DevFeeShares++;
+            else
+                Shares++;
+        }
+
+        public override string ToString()
+        {
+            return $"Total Shares: {Shares}, DevFee: {DevFeeShares}, Rejected: {RejectedShares}";
         }
     }
 }
