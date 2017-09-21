@@ -32,28 +32,64 @@ namespace stratum_proxy
 
             if (!File.Exists("proxy.txt"))
             {
-                Console.WriteLine("Create a proxy.txt with the configuration:\n");
-                string proxyConfig = @"{
-    ""local_host"": ""127.0.0.1:14001"",
-    ""pool_address"": ""xmr-us-east1.nanopool.org:14433"",
-    ""wallet"": ""MYWALLET"",
-    ""worker"": ""little_worker"",
-    ""ssl"": true
-}";
-                string help = @"Configuration file help:
-local_host      - IP to use as the proxy/server.
-pool_address    - The remote pool address. If it is a SSL/TLS one set ""ssl"" to ""true"".
-wallet          - Your wallet. Can be a exchange wallet with payment id (wallet.payment_id).
-worker          - Worker name to identify the DevFee on the pool.
-ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool using SSL/TLS.
-                  ONLY for the connection to the remote pool, not local.";
-
-                WriteLineColor(ConsoleColor.Gray, proxyConfig);
-                WriteLineColor(ConsoleColor.Gray, help);
-                Console.Write("\nDo you want to create it now? (y/n): ");
-                ConsoleKeyInfo key = Console.ReadKey(true);
-                if (key.Key == ConsoleKey.Y)
-                    File.WriteAllText("proxy.txt", proxyConfig);
+                // Guide
+                int steps = 5;
+                for (int i = 0; i < steps + 1; i++)
+                {
+                    string value;
+                    switch (i)
+                    {
+                        case 0:
+                            Console.Clear();
+                            Console.Write($"Enter a local host server name/IP ({StratumProxy.LocalHost}): ");
+                            value = Console.ReadLine().Trim();
+                            if (!string.IsNullOrEmpty(value))
+                                StratumProxy.LocalHost = value;
+                            break;
+                        case 1:
+                            Console.Write($"Enter the pool address/IP ({StratumProxy.PoolAddress}): ");
+                            value = Console.ReadLine().Trim();
+                            if (!string.IsNullOrEmpty(value))
+                                StratumProxy.PoolAddress = value;
+                            break;
+                        case 2:
+                            Console.Write("Enter your wallet address: ");
+                            StratumProxy.Wallet = Console.ReadLine().Trim();
+                            break;
+                        case 3:
+                            Console.Write($"Enter a worker name ({StratumProxy.Worker}): ");
+                            value = Console.ReadLine().Trim();
+                            if (!string.IsNullOrEmpty(value))
+                                StratumProxy.Worker = value;
+                            break;
+                        case 4:
+                            Console.Write($"Use SSL/TLS? (Only connection to the pool)({StratumProxy.IsSSL}) (y/n): ");
+                            bool ssl = Console.Read() == 'y';
+                            if (StratumProxy.IsSSL != ssl)
+                                StratumProxy.IsSSL = ssl;
+                            break;
+                        case 5:
+                            Console.Write(Environment.NewLine);
+                            Console.WriteLine("Final config: ");
+                            Console.WriteLine(StratumProxy.ToString());
+                            Console.Write("Is it ok? (y/n): ");
+                            bool configDone = Console.ReadKey().KeyChar == 'y';
+                            if (configDone)
+                            {
+                                StratumProxy.Create();
+                                i = 6;
+                                Main();
+                            }
+                            else
+                            {
+                                i = -1;
+                                // Clear input buffer
+                                while (Console.In.Peek() != -1)
+                                    Console.In.Read();
+                            }
+                            break;
+                    }
+                }
                 return;
             }
 
