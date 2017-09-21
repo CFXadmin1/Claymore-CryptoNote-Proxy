@@ -14,34 +14,22 @@ namespace stratum_proxy
 {
     class Program
     {
-        // Local server address
-        private static IPEndPoint LocalEndPoint;
-        private static string LocalHostName;
-
-        // Main remote pool address
-        private static IPEndPoint PoolEndPoint;
-        private static string PoolHostName;
-
-        // Main wallet
-        static string Wallet = string.Empty;
-
-        // Optional dev fee worker name
-        static string WorkerName = string.Empty;
-
-        // Secure Socket Layer
-        static bool IsSSL = false;
-
         // List with the DevFee ports used to identify the shares
         static List<int> DevFeeList = new List<int>();
 
         // Lists with shares count & errors
         static ShareCounter TotalShares = new ShareCounter();
 
+        // Proxy configuration
+        static ProxyConfig StratumProxy;
+
         /// <summary>
         /// Main method.
         /// </summary>
         static void Main()
         {
+            StratumProxy = new ProxyConfig();
+
             if (!File.Exists("proxy.txt"))
             {
                 Console.WriteLine("Create a proxy.txt with the configuration:\n");
@@ -74,17 +62,12 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
             Console.WriteLine("╔═════════════════════════════════════════════════════════════════╗");
             Console.WriteLine("║            Claymore CryptoNote Stratum Proxy  v1.3.1            ║");
             Console.WriteLine("╚═════════════════════════════════════════════════════════════════╝");
-
-            JavaScriptSerializer serializer = new JavaScriptSerializer();
-
-            Dictionary<string, object> jsonConfig;
-            try
+            
+            if(StratumProxy.Load())
             {
-                jsonConfig = serializer.Deserialize<dynamic>(File.ReadAllText("proxy.txt"));
-                IsSSL = bool.Parse(jsonConfig["ssl"].ToString());
                 Console.WriteLine("Config loaded!");
             }
-            catch
+            else
             {
                 Console.WriteLine("Bad configuration file!");
                 Console.Read();
@@ -92,47 +75,30 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
             }
 
             // SSL/TLS
-            if (IsSSL)
+            if (StratumProxy.IsSSL)
                 WriteLineColor(ConsoleColor.DarkMagenta, "Secure Socket Layer is enabled");
 
-            // Local server
-            string[] localHost = jsonConfig["local_host"].ToString().Split(':');
-            LocalEndPoint = new IPEndPoint(Dns.GetHostEntry(localHost[0]).AddressList[0], int.Parse(localHost[1]));
-            LocalHostName = localHost[0];
-            WriteLineColor(ConsoleColor.DarkCyan, $"Local server is {localHost[0]}:{localHost[1]}");
-
-            // Remote pool
-            string[] remoteHost = jsonConfig["pool_address"].ToString().Split(':');
-            PoolEndPoint = new IPEndPoint(Dns.GetHostEntry(remoteHost[0]).AddressList[0], int.Parse(remoteHost[1]));
-            PoolHostName = remoteHost[0];
-            WriteLineColor(ConsoleColor.DarkCyan, $"Main pool is {remoteHost[0]}:{remoteHost[1]}");
-
-            // Set wallet
-            Wallet = jsonConfig["wallet"].ToString().Trim();
+            // Print proxy configuration
+            WriteLineColor(ConsoleColor.DarkCyan, $"Local server is {StratumProxy.LocalHost}");
+            WriteLineColor(ConsoleColor.DarkCyan, $"Main pool is {StratumProxy.PoolAddress}");
 
             // Check if there is a PaymentID in the wallet
-            string[] walletParts = Wallet.Split('.');
+            string[] walletParts = StratumProxy.Wallet.Split('.');
             WriteLineColor(ConsoleColor.DarkCyan, $"Wallet is {walletParts[0]}");
             if (walletParts.Length > 1)
                 WriteLineColor(ConsoleColor.DarkCyan, $"  PaymentID is {walletParts[1]}");
 
-            // Worker name
-            if (jsonConfig.ContainsKey("worker") && jsonConfig["worker"] != null)
-                WorkerName = jsonConfig["worker"].ToString();
-            else
-                WorkerName = null;
-
-            if (!string.IsNullOrEmpty(WorkerName))
+            if (!string.IsNullOrEmpty(StratumProxy.Worker))
             {
-                WriteLineColor(ConsoleColor.DarkCyan, $"  Worker is {WorkerName}");
+                WriteLineColor(ConsoleColor.DarkCyan, $"  Worker is {StratumProxy.Worker}");
 
                 // Check pool separator
                 string[] poolsDot = { "nanopool.org", "monerohash.com", "minexmr.com", "dwarfpool.com" };
                 string[] poolsPlus = { "xmrpool.eu" };
-                if (poolsDot.Any(x => remoteHost[0].Contains(x)))
-                    WorkerName = "." + WorkerName;
-                else if (poolsPlus.Any(x => remoteHost[0].Contains(x)))
-                    WorkerName = "+" + WorkerName;
+                if (poolsDot.Any(x => StratumProxy.PoolAddress.Contains(x)))
+                    StratumProxy.Worker = "." + StratumProxy.Worker;
+                else if (poolsPlus.Any(x => StratumProxy.PoolAddress.Contains(x)))
+                    StratumProxy.Worker = "+" + StratumProxy.Worker;
                 else
                     WriteLineColor(ConsoleColor.DarkGray, "Pool worker separator not detected! Put it yourself in front of the worker name if it " +
                         "not has it. Check your pool details if you do not know. Skipping...\n");
@@ -146,7 +112,7 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
             WriteLineColor(ConsoleColor.DarkYellow, "Indentified DevFee shares are printed in yellow");
             WriteLineColor(ConsoleColor.DarkGreen, "Your shares are printed in green\n");
 
-            if (IsSSL)
+            if (StratumProxy.IsSSL)
                 Console.WriteLine("Do not connect using SSL/TLS in the miners! Only connection to the remote pool is using SSL/TLS.\n");
 
             Console.WriteLine("Press \"s\" for current statistics");
@@ -179,12 +145,12 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
             try
             {
                 Console.WriteLine("Initializing socket...");
-                server = new TcpListener(LocalEndPoint);
+                server = new TcpListener(StratumProxy.LocalHostEndPoint);
                 server.Start();
             }
             catch
             {
-                WriteLineColor(ConsoleColor.DarkRed, $"Failed to listen on {LocalEndPoint} ({LocalHostName}:{LocalEndPoint.Port})");
+                WriteLineColor(ConsoleColor.DarkRed, $"Failed to listen on {StratumProxy.LocalHostEndPoint} ({StratumProxy.LocalHost})");
                 WriteLineColor(ConsoleColor.DarkRed, "  Check for other listening sockets or correct permissions");
                 return;
             }
@@ -225,23 +191,24 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
             {
                 try
                 {
-                    if (IsSSL)
+                    if (StratumProxy.IsSSL)
                     {
-                        remoteClient = new TcpClient(PoolHostName, PoolEndPoint.Port);
+                        string poolHostName = StratumProxy.PoolAddress.Split(':')[0];
+                        remoteClient = new TcpClient(poolHostName, StratumProxy.PoolEndPoint.Port);
                         remoteSslStream = new SslStream(remoteClient.GetStream(), false,
                             new RemoteCertificateValidationCallback(ValidateServerCertificate), null);
-                        remoteSslStream.AuthenticateAsClient(PoolHostName);
+                        remoteSslStream.AuthenticateAsClient(poolHostName);
                     }
                     else
                     {
                         remoteSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                        remoteSocket.Connect(PoolEndPoint);
+                        remoteSocket.Connect(StratumProxy.PoolEndPoint);
                     }
                     break; // Connection OK
                 }
                 catch(Exception e)
                 {
-                    WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Connection lost with {PoolEndPoint}. Retry: {i}/3");
+                    WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Connection lost with {StratumProxy.PoolEndPoint}. Retry: {i}/3");
                     WriteLineColor(ConsoleColor.DarkRed, $"  Exception: {e.Message}");
                     Thread.Sleep(1000);
                     if (i == 3)
@@ -252,7 +219,7 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                 }
             }
 
-            if ((remoteSocket == null && !IsSSL) || (remoteSslStream == null && IsSSL))
+            if ((remoteSocket == null && !StratumProxy.IsSSL) || (remoteSslStream == null && StratumProxy.IsSSL))
             {
                 WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Could not connect to the pool.");
                 clientSocket.Close();
@@ -282,7 +249,7 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
                     try
                     {
                         // Send the modified packet to the remote pool
-                        if (IsSSL)
+                        if (StratumProxy.IsSSL)
                         {
                             remoteSslStream.Write(Encoding.UTF8.GetBytes(request));
                             remoteSslStream.Flush();
@@ -313,7 +280,7 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
 
                 // If there was a request before, wait for pool response or if data is available
                 if (lastRequestMethod.Length > 0 || remoteClient.Available > 0)
-                    poolResponse = IsSSL ? ReceiveFromSSL(remoteSslStream) : ReceiveFrom(remoteSocket);
+                    poolResponse = StratumProxy.IsSSL ? ReceiveFromSSL(remoteSslStream) : ReceiveFrom(remoteSocket);
 
                 if (poolResponse.Length > 0)
                 {
@@ -420,13 +387,13 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
 
                 if (jsonData["method"] == "login")
                 {
-                    if (!jsonData["params"]["login"].Contains(Wallet))
+                    if (!jsonData["params"]["login"].Contains(StratumProxy.Wallet))
                     {
                         WriteLineColor(ConsoleColor.DarkYellow, $"{GetNow()} - DevFee detected");
                         WriteLineColor(ConsoleColor.DarkYellow, $"  DevFee Wallet: {jsonData["params"]["login"]}");
 
                         // Replace wallet
-                        jsonData["params"]["login"] = Wallet + WorkerName;
+                        jsonData["params"]["login"] = StratumProxy.Wallet + StratumProxy.Worker;
                         WriteLineColor(ConsoleColor.DarkCyan, $"  New Wallet: {jsonData["params"]["login"]}");
 
                         // Add to DevFee ports list
@@ -568,6 +535,96 @@ ssl             - Use SSL/TLS. Set to ""true"" to connect to the remote pool usi
         public override string ToString()
         {
             return $"Total Shares: {Shares}, DevFee: {DevFeeShares}, Rejected: {RejectedShares}";
+        }
+    }
+
+    public class ProxyConfig
+    {
+        /// <summary>
+        /// Local host IP/Name server.
+        /// </summary>
+        public string LocalHost { get; set; } = "127.0.0.1:14001";
+
+        /// <summary>
+        /// Pool address.
+        /// </summary>
+        public string PoolAddress { get; set; } = "xmr-us-east1.nanopool.org:14433";
+
+        /// <summary>
+        /// Wallet address.
+        /// </summary>
+        public string Wallet { get; set; }
+
+        /// <summary>
+        /// Worker name.
+        /// </summary>
+        public string Worker { get; set; } = "little_worker";
+
+        /// <summary>
+        /// Secure Socket Layer.
+        /// </summary>
+        public bool IsSSL { get; set; } = true;
+
+        /// <summary>
+        /// Local server endpoint.
+        /// </summary>
+        public IPEndPoint LocalHostEndPoint { get; set; }
+
+        /// <summary>
+        /// Pool server endpoint.
+        /// </summary>
+        public IPEndPoint PoolEndPoint { get; set; }
+
+        public bool Load()
+        {
+            JavaScriptSerializer serializer = new JavaScriptSerializer();
+            Dictionary<string, object> json;
+            try
+            {
+                json = serializer.Deserialize<dynamic>(File.ReadAllText("proxy.txt"));
+                IsSSL = bool.Parse(json["ssl"].ToString());
+
+                // Local server
+                LocalHost = json["local_host"].ToString();
+                string[] localHost = LocalHost.Split(':');
+                LocalHostEndPoint = new IPEndPoint(Dns.GetHostEntry(localHost[0]).AddressList[0], int.Parse(localHost[1]));
+
+                // Remote pool
+                PoolAddress = json["pool_address"].ToString();
+                string[] remoteHost = PoolAddress.Split(':');
+                PoolEndPoint = new IPEndPoint(Dns.GetHostEntry(remoteHost[0]).AddressList[0], int.Parse(remoteHost[1]));
+
+                // Set wallet
+                Wallet = json["wallet"].ToString().Trim();
+
+                // Worker name
+                if (json.ContainsKey("worker") && json["worker"] != null)
+                    Worker = json["worker"].ToString();
+                else
+                    Worker = null;
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public void Create()
+        {
+            File.WriteAllText("proxy.txt", ToString());
+        }
+
+        public override string ToString()
+        {
+            return @"{
+    ""local_host"": """ + LocalHost + @""",
+    ""pool_address"": """ + PoolAddress + @""",
+    ""wallet"": """ + Wallet + @""",
+    ""worker"": """ + Worker + @""",
+    ""ssl"": " + IsSSL.ToString().ToLowerInvariant() + @"
+}";
         }
     }
 }
