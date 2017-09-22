@@ -96,7 +96,7 @@ namespace stratum_proxy
             // Header
             Console.Write('\n');
             Console.WriteLine("╔═════════════════════════════════════════════════════════════════╗");
-            Console.WriteLine("║            Claymore CryptoNote Stratum Proxy  v1.3.1            ║");
+            Console.WriteLine("║             Claymore CryptoNote Stratum Proxy  v1.4             ║");
             Console.WriteLine("╚═════════════════════════════════════════════════════════════════╝");
             
             if(StratumProxy.Load())
