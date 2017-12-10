@@ -96,10 +96,10 @@ namespace stratum_proxy
             // Header
             Console.Write('\n');
             Console.WriteLine("╔═════════════════════════════════════════════════════════════════╗");
-            Console.WriteLine("║             Claymore CryptoNote Stratum Proxy  v1.4             ║");
+            Console.WriteLine("║             Claymore CryptoNote Stratum Proxy  v1.5             ║");
             Console.WriteLine("╚═════════════════════════════════════════════════════════════════╝");
-            
-            if(StratumProxy.Load())
+
+            if (StratumProxy.Load())
             {
                 Console.WriteLine("Config loaded!");
             }
@@ -131,19 +131,20 @@ namespace stratum_proxy
                 // Check pool separator
                 string[] poolsDot = { "nanopool.org", "monerohash.com", "minexmr.com", "dwarfpool.com" };
                 string[] poolsPlus = { "xmrpool.eu" };
+                string[] poolsColon = { "supportxmr.com" };
                 if (poolsDot.Any(x => StratumProxy.PoolAddress.Contains(x)))
                     StratumProxy.Worker = "." + StratumProxy.Worker;
                 else if (poolsPlus.Any(x => StratumProxy.PoolAddress.Contains(x)))
                     StratumProxy.Worker = "+" + StratumProxy.Worker;
-                else
+                else if (!poolsColon.Any(x => StratumProxy.PoolAddress.Contains(x)))
                     WriteLineColor(ConsoleColor.DarkGray, "Pool worker separator not detected! Put it yourself in front of the worker name if it " +
                         "not has it. Check your pool details if you do not know. Skipping...\n");
             }
 
             // Info
             Console.WriteLine("Based on https://github.com/JuicyPasta/Claymore-No-Fee-Proxy by JuicyPasta & Drdada");
-            Console.WriteLine("As Claymore v9.7 beta, the DevFee logins at the start and takes some hashes all the time,\n" +
-                "like 1 hash every 39 of yours (there is not connection/disconections for devfee like in ETH).\n " +
+            Console.WriteLine("Claymore v10.2 Beta: The miner mines for 36/54 seconds for developer every hour.\n" +
+                "Claymore V9.7 Beta: The miner mines 39/49 rounds for you and 1 round for developer.\n" +
                 "This proxy tries to replace the wallet in every login detected that is not your wallet.\n");
             WriteLineColor(ConsoleColor.DarkYellow, "Indentified DevFee shares are printed in yellow");
             WriteLineColor(ConsoleColor.DarkGreen, "Your shares are printed in green\n");
@@ -160,15 +161,9 @@ namespace stratum_proxy
             // Listening loop
             while (true)
             {
-                try
-                {
-                    ServerLoop();
-                }
-                catch
-                {
-                    WriteLineColor(ConsoleColor.DarkRed, "Socket connection dropped! Retrying in 10 s...");
-                    Thread.Sleep(10000);
-                }
+                ServerLoop();
+                WriteLineColor(ConsoleColor.DarkRed, "Socket connection dropped! Retrying in 10 s...");
+                Thread.Sleep(10000);
             }
         }
 
@@ -242,7 +237,7 @@ namespace stratum_proxy
                     }
                     break; // Connection OK
                 }
-                catch(Exception e)
+                catch (Exception e)
                 {
                     WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Connection lost with {StratumProxy.PoolEndPoint}. Retry: {i}/3");
                     WriteLineColor(ConsoleColor.DarkRed, $"  Exception: {e.Message}");
@@ -262,25 +257,24 @@ namespace stratum_proxy
                 return; // Exit thread
             }
 
+            // Last request method
+            string lastRequestMethod = string.Empty;
+
             // Main loop
             while (true)
             {
                 // Read packet from the local client
                 string request = ReceiveFrom(clientSocket.Client);
 
-                // Last request method
-                string lastRequestMethod = string.Empty;
-
                 if (request.Length > 0)
                 {
                     // Parse the request method
                     int indexMethod = request.IndexOf("method");
                     if (indexMethod > 0)
-                        lastRequestMethod = request.
-                            Substring(indexMethod + 7, (request.IndexOf(",", indexMethod)) - (indexMethod + 7)).Trim();
+                        lastRequestMethod = request.Substring(indexMethod + 8, (request.IndexOf(",", indexMethod)) - (indexMethod + 8)).Trim();
 
                     // Modify the wallet
-                    request = RequestEdit(request, clientEndPoint);
+                    request = RequestEdit(request, clientEndPoint) + '\n';
 
                     try
                     {
@@ -301,7 +295,7 @@ namespace stratum_proxy
                         clientSocket.Close();
                         break; // Main loop
                     }
-                    catch(Exception ex)
+                    catch (Exception ex)
                     {
                         WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Send to pool failed. {clientEndPoint}: {request}");
                         WriteLineColor(ConsoleColor.DarkRed, $"  Generic Exception: {ex}");
@@ -315,7 +309,7 @@ namespace stratum_proxy
                 string poolResponse = string.Empty;
 
                 // If there was a request before, wait for pool response or if data is available
-                if (lastRequestMethod.Length > 0 || remoteClient.Available > 0)
+                if (lastRequestMethod.Length > 0 || remoteClient?.Available > 0)
                     poolResponse = StratumProxy.IsSSL ? ReceiveFromSSL(remoteSslStream) : ReceiveFrom(remoteSocket);
 
                 if (poolResponse.Length > 0)
@@ -323,9 +317,9 @@ namespace stratum_proxy
                     try
                     {
                         // Send the response to the local client (miner)
-                        clientSocket.Client.Send(Encoding.UTF8.GetBytes(poolResponse));
+                        clientSocket.Client.Send(Encoding.UTF8.GetBytes(poolResponse + '\n'));
                     }
-                    catch(SocketException se)
+                    catch (SocketException se)
                     {
                         WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Disconnected! ({clientEndPoint}) Mining stopped?");
                         WriteLineColor(ConsoleColor.DarkRed, $"  Socket error({se.ErrorCode}): {se.Message}");
@@ -341,16 +335,19 @@ namespace stratum_proxy
                         break; // Main loop
                     }
 
-                    // Just in case, it can happen
                     try
                     {
-                        // Log accepted, DevFee, rejected shares and others
-                        LogResponse(poolResponse, clientEndPoint, lastRequestMethod);
+                        // Log accepted, DevFee, rejected shares, jobs and others
+                        WriteResponse(poolResponse, clientEndPoint, lastRequestMethod);
                     }
                     catch
                     {
-                        WriteLineColor(ConsoleColor.DarkGray, $"{GetNow()} - Error logging status. Nothing to worry about.");
+                        WriteLineColor(ConsoleColor.DarkGray, $"{GetNow()} - Error logging status. Probably a rejected/outdated share...");
+                        WriteLineColor(ConsoleColor.DarkGray, $"{poolResponse}");
+                        TotalShares.Add(IsDevFee(clientEndPoint.Port), true);
                     }
+
+                    lastRequestMethod = string.Empty;
                 }
 
                 // Reduce CPU usage
@@ -395,12 +392,24 @@ namespace stratum_proxy
         {
             try
             {
-                byte[] buffer = new byte[2048];
-                string str = string.Empty;
-                int bytes = sslStream.Read(buffer, 0, buffer.Length);
-                if (bytes > 0)
-                    str += Encoding.UTF8.GetString(buffer, 0, bytes);
-                return str;
+                byte[] buffer = new byte[1024];
+                StringBuilder messageData = new StringBuilder();
+                int bytes = -1;
+                do
+                {
+                    bytes = sslStream.Read(buffer, 0, buffer.Length);
+
+                    Decoder decoder = Encoding.UTF8.GetDecoder();
+                    char[] chars = new char[decoder.GetCharCount(buffer, 0, bytes)];
+                    decoder.GetChars(buffer, 0, bytes, chars, 0);
+                    messageData.Append(chars);
+
+                    char lastChar = messageData[messageData.Length - 1];
+                    if (lastChar == 10 || lastChar == -1 || lastChar == '\n' || lastChar == '\r')
+                        break;
+                } while (bytes > 0);
+
+                return messageData.ToString();
             }
             catch
             {
@@ -429,7 +438,15 @@ namespace stratum_proxy
                         WriteLineColor(ConsoleColor.DarkYellow, $"  DevFee Wallet: {jsonData["params"]["login"]}");
 
                         // Replace wallet
-                        jsonData["params"]["login"] = StratumProxy.Wallet + StratumProxy.Worker;
+                        if (StratumProxy.PoolAddress.Contains("supportxmr.com"))
+                        {
+                            jsonData["params"]["login"] = StratumProxy.Wallet;
+                            if (!string.IsNullOrEmpty(StratumProxy.Worker))
+                                jsonData["params"]["pass"] = StratumProxy.Worker;
+                        }
+                        else
+                            jsonData["params"]["login"] = StratumProxy.Wallet + StratumProxy.Worker;
+
                         WriteLineColor(ConsoleColor.DarkCyan, $"  New Wallet: {jsonData["params"]["login"]}");
 
                         // Add to DevFee ports list
@@ -453,19 +470,31 @@ namespace stratum_proxy
         }
 
         /// <summary>
-        /// Prints to the console the response from the remote pool.
+        /// Write to the console the response from the remote pool.
         /// </summary>
         /// <param name="response">Buffer received from the remote pool.</param>
         /// <param name="clientEndPoint">Client connected to the pool.</param>
         /// <param name="requestMethod">The requested method used to get this response.</param>
-        static void LogResponse(string response, IPEndPoint clientEndPoint, string requestMethod)
+        static void WriteResponse(string response, IPEndPoint clientEndPoint, string requestMethod)
         {
-            dynamic jsonData = new JavaScriptSerializer().Deserialize<dynamic>(response);
+            dynamic jsonData = null;
+            try
+            {
+                jsonData = new JavaScriptSerializer().Deserialize<dynamic>(response);
+            }
+            catch (Exception)
+            {
+                WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Error parsing! ({clientEndPoint}) - {response}");
+                return;
+            }
 
             if (requestMethod.Contains("login"))
             {
-                WriteLineColor(IsDevFee(clientEndPoint.Port) ? ConsoleColor.DarkYellow : ConsoleColor.DarkGreen,
-                    $"{GetNow()} - Stratum - Connected ({clientEndPoint})");
+                if (IsDevFee(clientEndPoint.Port))
+                    WriteLineColor(ConsoleColor.DarkYellow, $"{GetNow()} - DevFee - Connected ({clientEndPoint})");
+                else
+                    WriteLineColor(ConsoleColor.DarkGreen, $"{GetNow()} - Stratum - Connected ({clientEndPoint})");
+                return;
             }
             else if (requestMethod.Contains("submit"))
             {
@@ -480,11 +509,28 @@ namespace stratum_proxy
                     WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Share rejected! ({clientEndPoint})");
                     TotalShares.Add(false, true);
                 }
+                return;
             }
 
-            int error = response.LastIndexOf("error");
-            if (error > 0 && jsonData["error"] != null)
-                WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Error {jsonData["error"]["code"]}: {jsonData["error"]["message"]}");
+            if (response.Contains("job"))
+            {
+                string devfee = IsDevFee(clientEndPoint.Port) ? " - DevFee" : "";
+                WriteLineColor(ConsoleColor.Gray, $"{GetNow()} - New job detected ({clientEndPoint}){devfee}");
+                return;
+            }
+
+            if (response.LastIndexOf("error") > 0)
+            {
+                try
+                {
+                    if (jsonData["error"] != null)
+                    {
+                        WriteLineColor(ConsoleColor.DarkRed, $"{GetNow()} - Share rejected! ({clientEndPoint}) - {jsonData["error"]["message"]}");
+                        TotalShares.Add(false, true);
+                    }
+                }
+                catch { WriteLineColor(ConsoleColor.Red, "Error!"); }
+            }
         }
 
         /// <summary>
@@ -542,7 +588,7 @@ namespace stratum_proxy
         /// Normal shares count.
         /// </summary>
         public int Shares { get; private set; }
-        
+
         /// <summary>
         /// Developer Fee shares count.
         /// </summary>
@@ -570,7 +616,10 @@ namespace stratum_proxy
 
         public override string ToString()
         {
-            return $"Total Shares: {Shares}, DevFee: {DevFeeShares}, Rejected: {RejectedShares}";
+            if (Shares + DevFeeShares > 0)
+                return $"Total Shares: {Shares}, DevFee: {DevFeeShares}, Rejected: {RejectedShares} ({(RejectedShares / (Shares + DevFeeShares) * 100)}%)";
+            else
+                return $"Total Shares: {Shares}, DevFee: {DevFeeShares}, Rejected: {RejectedShares}";
         }
     }
 
@@ -618,17 +667,35 @@ namespace stratum_proxy
             try
             {
                 json = serializer.Deserialize<dynamic>(File.ReadAllText("proxy.txt"));
-                IsSSL = bool.Parse(json["ssl"].ToString());
+                bool ssl = false;
+                bool.TryParse(json["ssl"].ToString(), out ssl);
+                IsSSL = ssl;
 
                 // Local server
                 LocalHost = json["local_host"].ToString();
-                string[] localHost = LocalHost.Split(':');
-                LocalHostEndPoint = new IPEndPoint(Dns.GetHostEntry(localHost[0]).AddressList[0], int.Parse(localHost[1]));
+                try
+                {
+                    string[] localHost = LocalHost.Split(':');
+                    LocalHostEndPoint = new IPEndPoint(Dns.GetHostEntry(localHost[0]).AddressList[0], int.Parse(localHost[1]));
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("\"local_host\" value is invalid!");
+                    Console.WriteLine($"   Exception: {e}");
+                }
 
                 // Remote pool
                 PoolAddress = json["pool_address"].ToString();
-                string[] remoteHost = PoolAddress.Split(':');
-                PoolEndPoint = new IPEndPoint(Dns.GetHostEntry(remoteHost[0]).AddressList[0], int.Parse(remoteHost[1]));
+                try
+                {
+                    string[] remoteHost = PoolAddress.Split(':');
+                    PoolEndPoint = new IPEndPoint(Dns.GetHostEntry(remoteHost[0]).AddressList[0], int.Parse(remoteHost[1]));
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("\"pool_address\" value is invalid!");
+                    Console.WriteLine($"   Exception: {e}");
+                }
 
                 // Set wallet
                 Wallet = json["wallet"].ToString().Trim();
